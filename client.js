@@ -1131,8 +1131,8 @@ function apply(ctx) {
      就再也不可能吞掉官方审批面板。 */
   /* The panels' own fixed copy, so the detail line is what is being ASKED rather
      than the buttons. Taken from the official dictionaries (approval: waiting /
-     reject / allowOnce; user-questions: the composer's nav + action labels). Not
-     stripping them would put 拒绝允许一次 on the card. `计划待审` is deliberately
+     reject / allowOnce; user-questions: the composer's nav + action labels).
+     Not stripping them would put 拒绝允许一次 on the card. `计划待审` is deliberately
      KEPT — it is a meaningful state label, not a button. */
   const APPROVAL_COPY = ['等待审批', 'Waiting for approval', '审批详情', 'Approval details', '拒绝', 'Reject', '允许一次', 'Allow once']
   const QUESTION_COPY = [
@@ -1140,14 +1140,39 @@ function apply(ctx) {
     '上一题', '下一题', '收起问题卡片', '展开问题卡片', '放弃整组问题', '推荐',
     '输入你的答案', '跳过本题', '确认执行', '拒绝', '去聊天里说',
     'Previous question', 'Next question', 'Dismiss all questions',
-    'Skip this question', 'Submit', 'Recommended', 'Enter your answer',
+    'Skip this question', 'Recommended', 'Enter your answer',
   ]
+  /* Short labels that are also ordinary words — the panel's submit button reads
+     `提交` (from the shared vocabulary, not the panel's own dictionary), and that
+     same word can legitimately sit INSIDE a question ("提交前要检查什么？"). So these
+     are removed only as a trailing suffix: the action row is the last thing in the
+     panel's DOM order, which is exactly why the tail is the safe end to cut. */
+  const QUESTION_TAIL = ['提交', '跳过', '取消', 'Submit', 'Skip', 'Cancel']
 
   const PENDING_PROBES = [
-    { state: 'approval', word: WORD_APPROVAL, notify: NOTIFY_TITLE_APPROVAL, attr: 'data-approval-key', strip: APPROVAL_COPY },
-    { state: 'question', word: WORD_QUESTION, notify: NOTIFY_TITLE_QUESTION, attr: 'data-question-key', strip: QUESTION_COPY },
-    { state: 'question', word: WORD_QUESTION, notify: NOTIFY_TITLE_QUESTION, attr: 'data-plan-review-key', strip: QUESTION_COPY },
+    { state: 'approval', word: WORD_APPROVAL, notify: NOTIFY_TITLE_APPROVAL, attr: 'data-approval-key', strip: APPROVAL_COPY, tail: [] },
+    { state: 'question', word: WORD_QUESTION, notify: NOTIFY_TITLE_QUESTION, attr: 'data-question-key', strip: QUESTION_COPY, tail: QUESTION_TAIL },
+    { state: 'question', word: WORD_QUESTION, notify: NOTIFY_TITLE_QUESTION, attr: 'data-plan-review-key', strip: QUESTION_COPY, tail: QUESTION_TAIL },
   ]
+
+  /* Cut known trailing button labels, repeatedly (a row can hold two). Never
+     empties the string: a detail that is nothing but a label keeps that label
+     rather than collapsing to the generic fallback. */
+  const stripTrailing = (s, tails) => {
+    let out = s
+    for (let pass = 0; pass < 4; pass++) {
+      let hit = false
+      for (let k = 0; k < tails.length; k++) {
+        const t = tails[k]
+        if (t === '' || out.length <= t.length) continue
+        if (out.slice(-t.length) !== t) continue
+        out = out.slice(0, out.length - t.length).replace(/\s+$/, '')
+        hit = true
+      }
+      if (!hit) break
+    }
+    return out
+  }
 
   const squash = (s) => {
     let out = ''
@@ -1159,6 +1184,24 @@ function apply(ctx) {
       if (space) { out += ' '; space = false }
       out += s.charAt(i)
     }
+    return out
+  }
+
+  /* 面板里显示的是**问题原文**（可能带 Markdown），而这一行是纯文本 HUD——不解释
+     语法，`**粗体**` 会原样显示成星号。所以剥掉成对的标记。
+
+     只处理两种，而且都是**成对**才动：
+       `**x**` → x        `` `x` `` → x
+
+     **刻意不处理单星号 `*x*`**：它和通配符、乘法撞得太死。`排除 *.png 和 2*3`
+     这种文本里，两颗星会被"配对"成强调、把中间的字一起吃掉——这不是假想，
+     是控制测试当场抓到的：
+       "排除 *.png 和 2*3 还有 file_name" → "排除 .png 和 23 还有 file_name"
+     单星号斜体在标题里本来就罕见，不值得为它冒这个风险。
+     下划线同样完全不碰（`file_name` 这类标识符太常见），波浪号也不碰（`~/path`）。 */
+  const stripMarkup = (s) => {
+    let out = s.replace(/\*\*([^*]+?)\*\*/g, '$1')
+    out = out.replace(/`([^`]+)`/g, '$1')
     return out
   }
 
@@ -1176,7 +1219,8 @@ function apply(ctx) {
         try { raw = typeof node.textContent === 'string' ? node.textContent : '' } catch (e) { raw = '' }
         let detail = squash(raw)
         for (let k = 0; k < probe.strip.length; k++) detail = detail.split(probe.strip[k]).join(' ')
-        detail = squash(detail)
+        detail = squash(stripMarkup(detail))
+        detail = stripTrailing(detail, probe.tail === undefined ? [] : probe.tail)
         if (detail === '') detail = probe.state === 'approval' ? APPROVAL_ASK.split('{tool}').join('?') : QUESTION_ASK
         let key = ''
         try { key = node.getAttribute(probe.attr) } catch (e) { key = '' }

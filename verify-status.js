@@ -496,6 +496,44 @@ console.log('--- D: QUESTION ---');
   check(detail.indexOf('确认执行') < 0 && detail.indexOf('跳过本题') < 0, 'D the composer action labels are stripped -> ' + detail, 'D the detail kept the button copy: ' + JSON.stringify(detail));
   check(detail.indexOf('要用哪个方案') >= 0, 'D the question text survives', 'D the question text was stripped away: ' + JSON.stringify(detail));
 }
+{
+  // The line is a plain-text HUD: it does not interpret Markdown, so `**bold**`
+  // would show up as literal asterisks. Paired emphasis is stripped — and ONLY
+  // paired, because `*.png`, `2*3` and `file_name` are real text that a blanket
+  // "delete the punctuation" rule would corrupt.
+  const t = boot();
+  t.showPanel('data-question-key', 'question:1', '请确认 **这个方案** 是否可以');
+  const detail = t.task();
+  check(detail.indexOf('*') < 0, 'D paired Markdown emphasis is stripped -> ' + detail, 'D literal asterisks reached the plate: ' + JSON.stringify(detail));
+  check(detail.indexOf('这个方案') >= 0, 'D and the emphasised words survive', 'D stripping ate the content: ' + JSON.stringify(detail));
+}
+{
+  // Control: the stripper must not touch text that merely CONTAINS those
+  // characters. Without this, "strip punctuation" would pass the test above.
+  const t = boot();
+  t.showPanel('data-question-key', 'question:1', '排除 *.png 和 2*3 还有 file_name');
+  const detail = t.task();
+  check(detail.indexOf('*.png') >= 0, 'D a glob pattern survives the stripper -> ' + detail, 'D the stripper mangled *.png: ' + JSON.stringify(detail));
+  check(detail.indexOf('2*3') >= 0, 'D so does a multiplication sign', 'D the stripper mangled 2*3: ' + JSON.stringify(detail));
+  check(detail.indexOf('file_name') >= 0, 'D and an underscore identifier (underscores are never touched)', 'D the stripper mangled file_name: ' + JSON.stringify(detail));
+}
+{
+  // The submit button lives at the END of the panel's DOM order, and its label
+  // (`提交`, from DSH's shared vocabulary) is also an ordinary word. So it is cut
+  // only as a TRAILING suffix.
+  const t = boot();
+  t.showPanel('data-question-key', 'question:1', '这条提示看得清吗提交');
+  const detail = t.task();
+  check(detail === '这条提示看得清吗', 'D a trailing button label is cut -> ' + JSON.stringify(detail), 'D the trailing label survived: ' + JSON.stringify(detail));
+}
+{
+  // Control: the SAME word in the middle of a question must survive — otherwise
+  // "strip the button label" would be indistinguishable from "delete the word".
+  const t = boot();
+  t.showPanel('data-question-key', 'question:1', '提交前要检查什么');
+  const detail = t.task();
+  check(detail.indexOf('提交') === 0, 'D but the same word inside the question is left alone -> ' + JSON.stringify(detail), 'D the stripper ate a meaningful word: ' + JSON.stringify(detail));
+}
 
 /* ==================================================================== E */
 console.log('--- E: several pendings at once ---');

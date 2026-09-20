@@ -66,6 +66,32 @@ const MUTANTS = {
     replace: ``,
     expect: ['B the detail strips the panel copy and keeps the reason'],
   },
+  /* Let literal Markdown asterisks reach the plate (it is a plain-text HUD). */
+  'no-markup-strip': {
+    find: `        detail = squash(stripMarkup(detail))`,
+    replace: `        detail = squash(detail)`,
+    expect: ['D paired Markdown emphasis is stripped'],
+  },
+  /* Over-reach the other way: strip asterisks unconditionally, corrupting globs
+     and multiplication. The control assertions exist precisely for this. */
+  'markup-strip-too-greedy': {
+    find: `    let out = s.replace(/\\*\\*([^*]+?)\\*\\*/g, '$1')`,
+    replace: `    let out = s.split('*').join('')`,
+    expect: ['D a glob pattern survives the stripper'],
+  },
+  /* Leave the panel's submit button on the line. */
+  'no-tail-strip': {
+    find: `        detail = stripTrailing(detail, probe.tail === undefined ? [] : probe.tail)`,
+    replace: ``,
+    expect: ['D a trailing button label is cut'],
+  },
+  /* Strip the button word ANYWHERE instead of only at the tail: a question that
+     merely mentions 提交 loses that word. */
+  'tail-strip-anywhere': {
+    find: `        detail = stripTrailing(detail, probe.tail === undefined ? [] : probe.tail)`,
+    replace: `        for (let q = 0; q < (probe.tail === undefined ? [] : probe.tail).length; q++) detail = detail.split(probe.tail[q]).join(' ')`,
+    expect: ['D but the same word inside the question is left alone'],
+  },
   /* A mutation observed just before teardown schedules a scan that runs after it:
      a detached plugin raises a plate and an OS toast one last time. */
   'scan-after-teardown': {
