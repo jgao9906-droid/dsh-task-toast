@@ -1,0 +1,5 @@
+# Normalize line endings: LF in the repository for every text file, so a clone on
+# any platform gets byte-identical sources to the ones the harnesses were written
+# against. Without this, a Windows checkout with core.autocrlf=true rewrites every
+# file and every diff becomes line-ending noise.
+* text=auto eol=lf

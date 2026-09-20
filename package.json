@@ -1,0 +1,52 @@
+{
+  "name": "dsh-task-toast",
+  "version": "1.0.0",
+  "description": "Top-right status plate for DeepSeek Harness: completion, errors, pending approvals and pending questions — drawn in the Endfield boot-plate visual language. / DSH 右上角状态提示板：完成、出错、待授权、待回答。",
+  "keywords": [
+    "deepseek",
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "plugin",
+    "toast",
+    "notification",
+    "status",
+    "endfield",
+    "client"
+  ],
+  "license": "MIT",
+  "author": "jgao9906-droid",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jgao9906-droid/dsh-task-toast.git"
+  },
+  "homepage": "https://github.com/jgao9906-droid/dsh-task-toast#readme",
+  "bugs": {
+    "url": "https://github.com/jgao9906-droid/dsh-task-toast/issues"
+  },
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  },
+  "scripts": {
+    "test": "node verify-toast.js && node verify-notify.js && node verify-status.js",
+    "mutants": "node _mutate.js list"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ]
+}

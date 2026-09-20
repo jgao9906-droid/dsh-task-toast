@@ -1,0 +1,13 @@
+# dsh-task-toast bundle patch
+#
+# This file is the `dsh.bundle.patch` layer of the package: when installed
+# through the official CLI the command reconciles `dsh.profile.bundles` against
+# installed packages and, seeing this declaration, appends `dsh-task-toast` to
+# the bundle stack. Profile boot then merges THIS patch — a single `insert` of
+# the plugin row — exactly like a manual cordis.patch.yml mount line.
+#
+# Host half (index.js) is intentionally empty; the row exists so the package
+# becomes a client bundle (`dsh.client` + exports["./client"] -> client.js).
+- insert:
+    - id: task-toast
+      name: 'dsh-task-toast'
