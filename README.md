@@ -2,7 +2,7 @@
 
 DeepSeek Harness 插件：**把 agent 的状态显示在右上角**——完成、出错、等你授权、等你回答、还有子 agent 在跑。
 视觉沿用 [`dsh-theme-endfield`](https://github.com/ymh0000123/dsh-theme-endfield) 开机加载屏的设计语言
-（**只是沿用设计语言，与本插件无隶属关系**；装了那个主题会自动跟随它的配色，没装也照常工作）。
+（**只是沿用设计语言，与本插件无隶属关系**）。
 
 ```bash
 dsh plugin --profile web add github:jgao9906-droid/dsh-task-toast
