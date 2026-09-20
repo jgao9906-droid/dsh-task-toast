@@ -10,6 +10,15 @@ dsh plugin --profile web add github:jgao9906-droid/dsh-task-toast
 
 零依赖、无构建步骤、不用手改 profile 补丁。详见 [安装](#安装)。
 
+<img src="assets/approval.png" width="470" alt="待授权：橙色 APPROVAL 板子，任务行是请求方给的理由，超长则单行省略">
+
+<img src="assets/question.png" width="470" alt="待回答：青色 QUESTION 板子，任务行是问题本身">
+
+> 两张都是真机截图。橙色那张的示例是一次**沙箱提权请求**——所以任务行是宿主生成的
+> `escalate sandbox to danger-full-access: …`；那是请求方给的理由，**插件不加工、只单行省略**
+> （官方面板里它是多行，这里一行放不下就截断）。工具级授权则显示成 `工具 Bash 请求越权执行`
+> ——见下面那段 ASCII 图。
+
 ```
 ┌────────────────────────────────────────────────────┐
 │▌ // TASK                                           │  ← 10px 强调色轨（自上而下填充）+ 大字距 kicker
