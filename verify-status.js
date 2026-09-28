@@ -637,6 +637,48 @@ console.log('--- H: SUBAGENT ---');
   check(t.word() === 'COMPLETE', 'H an unrelated session\'s running child does not count', 'H a foreign child was counted as ours');
 }
 
+/* ==================================================================== M */
+/* 跨会话：别人跑完了也要报。改之前只盯当前会话 —— 你一切走，原来那个会话跑完是静默的，
+   而且切回去也不会补（重新绑定会把当时的 running 当成新基线）。 */
+console.log('--- M: other sessions report too ---');
+{
+  const t = boot();
+  t.setHidden(true);   // 走开：板子照样发，系统通知该走 OS 通道
+  t.row('b', { displayTitle: '另一个会话', running: true });
+  check(t.livePlates().length === 0, 'M first sight of a running session is a baseline, not an event', 'M the plugin reported a session that was already running when the page loaded');
+  t.row('b', { displayTitle: '另一个会话', running: false });
+  check(t.word() === 'COMPLETE' && t.task() === '另一个会话', 'M a background session finishing reports COMPLETE with ITS title -> ' + t.word() + ' / ' + t.task(), 'M it reported ' + JSON.stringify([t.word(), t.task()]));
+  check(t.raised.length === 1 && t.raised[0].sessionId === 'b' && t.raised[0].tag.indexOf('b') >= 0, 'M the OS toast carries the reported session id, so click-to-focus lands on THAT session', 'M the toast kept the current session id: clicking it would open the wrong session');
+  t.row('b', { displayTitle: '另一个会话', running: false });
+  check(t.raised.length === 1, 'M publishing the same running=false again does not re-fire', 'M a steady state re-fired forever');
+}
+{
+  const t = boot();
+  t.setHidden(true);
+  t.sessionA.patch({ running: true });
+  t.clock.advance(150);
+  t.row('a', { displayTitle: '我的会话标题', running: true });
+  const before = t.raised.length;
+  t.sessionA.patch({ running: false });
+  t.clock.advance(150);
+  t.row('a', { displayTitle: '我的会话标题', running: false });
+  check(t.raised.length - before === 1, 'M ending the CURRENT session reports exactly once (the row path stays out of it) -> ' + (t.raised.length - before), 'M the current session was reported twice: the row path duplicated the session subscription');
+}
+{
+  const t = boot();
+  t.row('b', { displayTitle: '另一个会话', running: false });
+  t.list.set(Object.assign({}, t.list.getSnapshot(), { current: 'b' }));
+  t.row('a', { displayTitle: '我的会话标题', running: true });
+  t.row('a', { displayTitle: '我的会话标题', running: false });
+  check(t.task() === '我的会话标题', 'M a session that finishes AFTER you switched away is still reported -> ' + t.task(), 'M switching away swallowed the completion - the bug this section exists for');
+}
+{
+  const t = boot();
+  t.child('child-1', true);
+  t.child('child-1', false);
+  check(t.livePlates().length === 0, 'M a subagent session finishing is not reported on its own', 'M a child session produced its own plate on top of the parent SUBAGENT');
+}
+
 /* ==================================================================== I */
 console.log('--- I: priority — a pending outranks a transient plate ---');
 {

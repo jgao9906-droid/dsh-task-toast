@@ -1046,8 +1046,9 @@ function apply(ctx) {
        2. 列表行投影到公开面时，父链接叫 `parentId`，不叫内部的
           `parentSessionId`。用错名字会得到一个永远为假的判定。
      只认"有子会话在跑"，不认 catalog —— catalog 只有你展开过才建。 */
-  const childrenRunning = () => {
+  const childrenRunning = (id) => {
     try {
+      const owner = pickId(id)
       const sessions = getSessions()
       if (sessions === undefined || sessions === null) return false
       const snap = sessions.list.getSnapshot()
@@ -1056,26 +1057,81 @@ function apply(ctx) {
       const ids = Object.keys(byId)
       for (let i = 0; i < ids.length; i++) {
         const row = byId[ids[i]]
-        if (row && row.parentId === watchedId && row.running === true) return true
+        if (row && row.parentId === owner && row.running === true) return true
       }
       return false
     } catch (e) { return false }
+  }
+
+  /* 会话 id 归一：不传 = 当前会话。老路径一个字节都不变，传了才切到"别的会话"。 */
+  const pickId = (id) => (typeof id === 'string' && id !== '') ? id : watchedId
+
+  /* ---- 别人的会话也在跑吗（跨会话） ----
+     原本只盯"当前会话"：你一走开，原来那个会话跑完了不会有任何提示——而且切回去
+     也不会补，因为重新绑定会把当时的 running 当新基线。这里补上这一块。
+
+     分工是刻意划开的，为的是**同一次结束只被报一遍**：
+       · 当前会话 → 由它自己的会话订阅负责（老路径，语义与断言都没动）；
+       · 其它顶层会话 → 由这张表按列表行的 running 做边沿。
+
+     两条容易搞错的地方：
+       1. 子 agent 会话（`parentId` 非空）不单独报——父会话会以 SUBAGENT 报一次，
+          再报一条纯属噪音；
+       2. 第一次见到某一行只**取基线**，不播报——否则插件一加载就会把"早就在跑的
+          会话"挨个报一遍。
+
+     列表行在"你正看着的那个会话"上是故意不跟踪的（交给会话订阅），所以它一变成
+     非当前会话，基线由下次 syncRowRunning 当场重取。 */
+  const rowRunning = new Map()   // 会话 id -> 列表行上的 running（上次见到的值）
+
+  const syncRowRunning = () => {
+    const sessions = getSessions()
+    if (sessions === undefined || sessions === null) return
+    let byId = null
+    try {
+      const snap = sessions.list.getSnapshot()
+      byId = (snap === null || typeof snap !== 'object') ? null : snap.byId
+    } catch (e) { return }
+    if (byId === null || typeof byId !== 'object') return
+    const ids = Object.keys(byId)
+    const alive = new Set()
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i]
+      const row = byId[id]
+      if (row === null || typeof row !== 'object') continue
+      if (row.removed === true) continue
+      // 子 agent 会话：交给父会话的 SUBAGENT 播报
+      if (row.parentId !== null && row.parentId !== undefined) continue
+      alive.add(id)
+      const running = row.running === true
+      if (id === watchedId) { rowRunning.set(id, running); continue }
+      if (!rowRunning.has(id)) { rowRunning.set(id, running); continue }
+      const prev = rowRunning.get(id)
+      rowRunning.set(id, running)
+      if (prev === true && running === false) onTurnEnd(id, titleOf(id))
+    }
+    // 已经不在列表里的会话：把账清掉，免得 id 被复用时拿着旧基线
+    const stale = []
+    rowRunning.forEach((value, id) => { if (!alive.has(id)) stale.push(id) })
+    for (let i = 0; i < stale.length; i++) rowRunning.delete(stale[i])
   }
 
   /* ---- 两个可见通道的公共出口 ----
      瞬时型状态全都从这里走，所以"板子永远显示、系统通知才挂可见性判据"这条
      规则只有一份实现。`force` 给挂起型用：agent 正卡着等你，那比"完成了"更
      该被你知道，所以无视可见性也要发。 */
-  const notifyMaybe = (title, body, force) => {
+  /* tag 里带着会话 id，桌面壳靠它接上"点通知跳回那个会话"——报了别的会话时，
+     这里必须跟着换，否则点开跳到的是当前会话。 */
+  const notifyMaybe = (title, body, force, sessionId) => {
     const away = !isLookingAtDsh()
     if (!OS_NOTIFY) return false
-    if (force || away || !OS_NOTIFY_ONLY_WHEN_AWAY) return notifyOS(body, watchedId, title)
+    if (force || away || !OS_NOTIFY_ONLY_WHEN_AWAY) return notifyOS(body, pickId(sessionId), title)
     return false
   }
-  const announce = (word, detail, state, notifyTitle, force) => {
+  const announce = (word, detail, state, notifyTitle, force, sessionId) => {
     // 挂起中的整块板子优先：它代表"有东西在等你"，不能被一条完成/错误顶掉。
     if (!(plateSticky && plate !== null)) showToast(word, detail, state, false)
-    notifyMaybe(notifyTitle, detail, force === true)
+    notifyMaybe(notifyTitle, detail, force === true, sessionId)
     badgeIfAway()
   }
   // The `●` title badge is the cheap taskbar affordance, and it follows the same
@@ -1303,8 +1359,11 @@ function apply(ctx) {
      Note this also keeps the plate out of a backgrounded page, where timer
      throttling would otherwise leave it on screen longer than asked — see
      reapStalePlate(), which is the second half of that guarantee. */
-  const onTurnEnd = () => {
-    const title = currentTitle()
+  /* `sessionId` 不传 = 当前会话（老路径原样）；传了就是"另一个会话的回合结束了"：
+     标题取那个会话的、通知 tag 带它的 id、子 agent 判断也针对它。 */
+  const onTurnEnd = (sessionId, titleOverride) => {
+    const sid = pickId(sessionId)
+    const title = (typeof titleOverride === 'string') ? titleOverride : titleOf(sid)
     // The session title IS the brief "what was this about" label: DSH derives it
     // from the conversation itself, so nothing is invented here and nothing extra
     // is fetched. A brand-new session has no title yet — fall back to a neutral
@@ -1312,9 +1371,9 @@ function apply(ctx) {
     const task = title !== '' ? title : TAG_DONE
     // "This turn is over" is not the same claim as "the work is done": if subagent
     // sessions are still running under this one, COMPLETE would be a lie.
-    const delegated = childrenRunning()
-    if (delegated) announce(WORD_SUBAGENT, task, 'subagent', NOTIFY_TITLE, false)
-    else announce(WORD_DONE, task, 'done', NOTIFY_TITLE, false)
+    const delegated = childrenRunning(sid)
+    if (delegated) announce(WORD_SUBAGENT, task, 'subagent', NOTIFY_TITLE, false, sid)
+    else announce(WORD_DONE, task, 'done', NOTIFY_TITLE, false, sid)
     maybeAskPermission()                       // one-shot, only while undecided
   }
 
@@ -1330,7 +1389,7 @@ function apply(ctx) {
     if (unsubList !== null) return
     try {
       if (sessions.list && typeof sessions.list.subscribe === 'function') {
-        const u = sessions.list.subscribe(() => { rebind() })
+        const u = sessions.list.subscribe(() => { rebind(); syncRowRunning() })
         unsubList = typeof u === 'function' ? u : null
       }
     } catch (e) { unsubList = null }
@@ -1427,6 +1486,7 @@ function apply(ctx) {
   } catch (e) { /* ignore */ }
 
   rebind()
+  syncRowRunning()   // 启动时先给所有行取一次基线
 
   ctx.effect(() => () => {
     disposed = true

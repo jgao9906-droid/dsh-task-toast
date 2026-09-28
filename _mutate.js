@@ -18,8 +18,8 @@ const MUTANTS = {
   /* The exact wrong field name I nearly shipped: the internal `parentSessionId`
      instead of the public `parentId`. Silently never matches -> no SUBAGENT. */
   'internal-parent-field': {
-    find: `row.parentId === watchedId`,
-    replace: `row.parentSessionId === watchedId`,
+    find: `row.parentId === owner`,
+    replace: `row.parentSessionId === owner`,
     expect: ['H a turn ending while children run says SUBAGENT'],
   },
   /* Give a pending plate the ordinary toast deadline: it vanishes while the agent
@@ -173,6 +173,27 @@ const MUTANTS = {
     find: `const TOP_GAP    = 48     // 距视口顶边的边距(px)`,
     replace: `const TOP_GAP    = 18`,
     expect: ['L the top gap'],
+  },
+  /* Report the session you are LOOKING at twice: once from its session subscription,
+     once from the list row. Same completion, two plates. */
+  'reports-current-session-twice': {
+    find: `      if (id === watchedId) { rowRunning.set(id, running); continue }`,
+    replace: `      if (id === '__never__') { rowRunning.set(id, running); continue }`,
+    expect: ['M ending the CURRENT session reports exactly once'],
+  },
+  /* Let subagent rows report on their own: the parent already says SUBAGENT, so every
+     child adds a plate of pure noise. */
+  'reports-child-sessions': {
+    find: `      if (row.parentId !== null && row.parentId !== undefined) continue`,
+    replace: `      if (false) continue`,
+    expect: ['M a subagent session finishing is not reported on its own'],
+  },
+  /* Fire on the first sight of a row instead of baselining it: every session that was
+     already running when the page loaded gets announced once. */
+  'no-row-baseline': {
+    find: `      if (!rowRunning.has(id)) { rowRunning.set(id, running); continue }`,
+    replace: `      if (!rowRunning.has(id)) { rowRunning.set(id, running); onTurnEnd(id, titleOf(id)); continue }`,
+    expect: ['M first sight of a running session is a baseline'],
   },
   /* Leave the reduced-motion rule aimed at the selector the animation moved off. */
   'reduced-motion-stale-selector': {

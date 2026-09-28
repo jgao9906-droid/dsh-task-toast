@@ -131,7 +131,7 @@ dsh plugin --profile web add github:jgao9906-droid/dsh-task-toast
 
 > 在 Tauri 桌面端上这块询问板**不会出现**：宿主的 shim 让 `Notification.permission` 永远返回 `'granted'`，并且把每条 `new Notification(...)` 接到宿主自己的原生通知上。那段询问逻辑只在普通浏览器里有意义。
 
-系统通知的正文带上当前会话标题；`tag` 是 `dsh-notification-<会话id>-0`，**形状是宿主定的契约**——它按这个正则从 tag 里取会话 id，用来让**点击通知直接跳到那个会话**。重复完成用同一个 tag，所以是**替换而不是堆叠**。
+系统通知的正文带上**所属会话**的标题；`tag` 是 `dsh-notification-<会话id>-0`，**形状是宿主定的契约**——它按这个正则从 tag 里取会话 id，用来让**点击通知直接跳到那个会话**。重复完成用同一个 tag，所以是**替换而不是堆叠**。
 
 ### 两条前提（在你的启动方式下都成立）
 
@@ -188,8 +188,8 @@ dsh plugin --profile web rm dsh-task-toast
 仓库自带三个 harness、一个变异测试矩阵，**零依赖、不需要 DSH 在跑**（`vm` + 假 DOM/假时钟）：
 
 ```bash
-npm test                 # 三个 harness，共 194 条断言
-node _mutate.js list     # 列出 25 个变异体，各自对应哪条断言
+npm test                 # 三个 harness，共 201 条断言
+node _mutate.js list     # 列出 28 个变异体，各自对应哪条断言
 ```
 
 ## 它怎么知道每个状态
@@ -289,13 +289,31 @@ node _mutate.js list     # 列出 25 个变异体，各自对应哪条断言
   失败模式。之前那条警告是真实风险，现在是结构上不可能。
 - 代价：这是**非官方钩子**。DSH 若改掉这些 data 属性，状态会静默退化（见下）。
 
+### 别的会话跑完了也算（跨会话）
+
+原本只盯**当前会话**：你一切走，原来那个会话跑完是**静默的**，而且切回去也不会补——重新绑定
+会把当时的 `running` 当成新基线，那一次下落沿就这么错过了。
+
+现在按列表快照的 `byId` 给**每个顶层会话**各记一条基线：谁的 `running` 从 true 落到 false 就报谁，
+标题取那个会话自己的 `displayTitle`。分工是刻意划开的，为的是**同一次结束只被报一遍**——当前会话
+仍由它自己的会话订阅负责（那条老路径的语义和断言一个字没动），列表行只管**其它**会话。两条边界：
+
+- **子 agent 会话不单独报**（`parentId` 非空）：父会话已经用 `SUBAGENT` 报过一次，再报一条纯属噪音；
+- **第一次见到某一行只取基线**，不播报：否则插件一加载就会把"早就在跑的会话"挨个报一遍。
+
+配套改了一处：系统通知的 `tag` 里带的是**被播报那个会话**的 id。所以后台会话完成时点通知，
+跳过去的是它，而不是你正看着的会话——这个"点通知跳回去"的能力现在才真正用上。
+
+**还没做的**：跨会话的**待授权 / 待回答**。挂起状态走的是官方面板的 DOM，而 DOM 里只有一个面板，
+看不到别的会话在等什么——那需要接 `$events` 事件流（已实测可用），排在下一步。
+
 ### 拿不到的信号（别指望）
 
 | 想要 | 为什么拿不到 |
 | --- | --- |
 | `turn/end` 的 `reason`（`completed`/`error`/`aborted`/`blocked`/`max-tokens`/`interrupted`） | 它确实存在于 `SessionEventMap`，但**客户端插件没有订阅点**：`Session.events` 是会话对象自己翻页 transcript 用的内部流，不是公开订阅。把所有 `lib/client.js` 扫过一遍，**没有任何客户端消费者碰 `turn/end`**。所以"这一回合是以什么方式结束的"推不出来 |
 | `tool/result` 的 `error: {name, code}` | 同样是 session event，够不到。所以"某个工具报错了"报不出来，只有 **agent 级**错误 |
-| 挂起属于哪个会话 | DOM 里只有一个面板，拿不到它挂在哪个会话上（远程事件那条路本来可以用 `ctx.sessions.scopeOf(this)`，但那条路不通）。所以待授权/待回答**不标注会话**，系统通知的点击跳转也指向**当前会话**——子 agent 的授权可能跳错 |
+| 挂起属于哪个会话 | DOM 里只有一个面板，拿不到它挂在哪个会话上（远程事件那条路**其实是通的**：`/api/remote.mux` + `$events` 已实测收到 waterfall 帧，帧里带 `agentId`，也就是会话 id——跨会话识别挂起排在下一步）。所以待授权/待回答**不标注会话**，系统通知的点击跳转也指向**当前会话**——子 agent 的授权可能跳错 |
 | 主会话"子 agent 全部跑完" | 子会话行消失/停跑时**不会**再产生一次 `COMPLETE`。`SUBAGENT` 之后就没了 —— 要知道全部完成，得再发一条消息或看侧栏 |
 
 **兼容性风险**：待授权/待回答依赖 DSH 官方面板的 **data 属性**（rc 版可能改名）。
@@ -424,6 +442,9 @@ node verify-status.js "$PWD/_mutant.js"   # 必须失败
 | `bar-still-tiny` | 把细边改回那个"看不出来"的长度 | 1 条 |
 | `bar-not-aligned` | 细边贴回视口角落（比板子高出一个边距） | 1 条 |
 | `top-gap-clips-window-controls` | 纵向边距缩回 18px（重新压到窗口关闭按钮上） | 1 条 |
+| `reports-current-session-twice` | 当前会话被会话订阅和列表行各报一次（同一次结束两块板子） | 1 条 |
+| `reports-child-sessions` | 子 agent 会话也单独报（每个子会话一条噪音） | 1 条 |
+| `no-row-baseline` | 第一次见到某行就播报，而不是先取基线（加载时把在跑的会话全报一遍） | 1 条 |
 | `bar-hardcoded-height` | 不采用板子的实测高度，用写死的长度 | 1 条 |
 | `slip-offset-by-padding` | 忘记在内部减掉命中区的 padding（整条低 4px） | 1 条 |
 | `pointer-target-overlaps-plate` | 命中区宽到和板子重叠（悬停会抽搐） | 1 条 |

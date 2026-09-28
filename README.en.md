@@ -178,7 +178,7 @@ already `denied` it never asks at all.
 > `Notification.permission` always return `'granted'` and wires every `new Notification(...)` to
 > the host's own native notifications. That logic only matters in a plain browser.
 
-The OS notification body carries the current session title; the `tag` is
+The OS notification body carries the title of the session the state belongs to; the `tag` is
 `dsh-notification-<session id>-0`, **whose shape is a contract with the host** — it parses the
 session id out of the tag so that **clicking the notification jumps to that session**. Repeat
 completions reuse the same tag, so they **replace rather than stack**.
@@ -253,8 +253,8 @@ Three harnesses and a mutation matrix ship in the repo. **Zero dependencies, no 
 (`vm` plus a fake DOM and fake clock):
 
 ```bash
-npm test                 # three harnesses, 194 assertions
-node _mutate.js list     # list all 25 mutants and the assertion each one targets
+npm test                 # three harnesses, 201 assertions
+node _mutate.js list     # list all 28 mutants and the assertion each one targets
 ```
 
 ## How it knows each state
@@ -377,13 +377,38 @@ Three properties follow:
 - The cost: this is an **unofficial hook**. If DSH changes those `data-` attributes, the states
   degrade silently (see below).
 
+### Other sessions report too (cross-session)
+
+This used to watch the **current session** only: the moment you switched away, the session you left
+finished silently — and switching back would not repair it either, because rebinding takes whatever
+`running` says at that moment as the new baseline, losing that falling edge for good.
+
+Now every **top-level session** gets its own baseline from the list snapshot's `byId`: whoever falls
+from `running: true` to `false` gets reported, with that session's own `displayTitle`. The split is
+deliberate, so that **one completion is reported exactly once** — the current session is still owned by
+its own session subscription (that path's semantics and assertions are untouched), and the list rows
+only cover the **others**. Two boundaries:
+
+- **subagent sessions are not reported on their own** (`parentId` set): the parent already reports
+  `SUBAGENT`, and a second plate per child is noise;
+- **the first sighting of a row only takes a baseline**: otherwise loading the page would announce
+  every session that was already running.
+
+One companion change: the OS notification's `tag` now carries the id of the session being reported, so
+clicking the toast for a background completion lands on *that* session instead of the one you are
+looking at — click-to-focus only becomes truly useful with this.
+
+**Not done yet**: cross-session **pending approvals / questions**. Pending states are read from the
+official panels' DOM, and the DOM only holds the panel for the session you have open — it cannot see
+what another session is waiting for. That needs the `$events` stream (measured working), and is next.
+
 ### Signals it cannot reach (don't count on them)
 
 | Wanted | Why it is out of reach |
 | --- | --- |
 | `turn/end`'s `reason` (`completed` / `error` / `aborted` / `blocked` / `max-tokens` / `interrupted`) | It exists in `SessionEventMap`, but **a client plugin has no subscription point**: `Session.events` is the internal stream the session object uses to page its own transcript, not a public subscription. Having swept every `lib/client.js`, **no client consumer touches `turn/end`**. So "how did this turn end" cannot be derived |
 | `tool/result`'s `error: {name, code}` | Also a session event, also unreachable. So "some tool failed" cannot be reported — only **agent-level** errors |
-| Which session a pending state belongs to | The DOM only holds the panel; it does not say which session it is attached to. (The remote-event route could have used `ctx.sessions.scopeOf(this)`, but that route does not work.) So pending states are **not labelled with a session**, and the OS notification's click-to-focus points at the **current session** — a subagent's approval may jump to the wrong one |
+| Which session a pending state belongs to | The DOM only holds the panel; it does not say which session it is attached to. (The remote-event route **does work**: `/api/remote.mux` + `$events` was measured delivering waterfall frames that carry `agentId` — the session id. Cross-session pending detection is the next step.) So pending states are **not labelled with a session**, and the OS notification's click-to-focus points at the **current session** — a subagent's approval may jump to the wrong one |
 | "All subagents under the main session have finished" | A child session stopping or disappearing **does not** produce another `COMPLETE`. After `SUBAGENT` there is nothing — to know the whole job is done, send another message or watch the sidebar |
 
 **Compatibility risk**: pending approvals/questions depend on the official panels' **`data-`
@@ -533,6 +558,9 @@ node verify-status.js "$PWD/_mutant.js"   # must fail
 | `bar-still-tiny` | revert the slip to the length that read as invisible | 1 |
 | `bar-not-aligned` | pin the slip back to the viewport corner (a margin above the plate) | 1 |
 | `top-gap-clips-window-controls` | shrink the vertical gap back to 18px (clips the window close button) | 1 |
+| `reports-current-session-twice` | report the current session from both paths (one completion, two plates) | 1 |
+| `reports-child-sessions` | let subagent rows report on their own (a plate of noise per child) | 1 |
+| `no-row-baseline` | fire on the first sighting of a row instead of baselining it | 1 |
 | `bar-hardcoded-height` | ignore the measured plate height, use the hardcoded length | 1 |
 | `slip-offset-by-padding` | forget to cancel the hit padding internally (the slip sits 4px low) | 1 |
 | `pointer-target-overlaps-plate` | widen the pointer target into the plate (hovering would flicker) | 1 |
