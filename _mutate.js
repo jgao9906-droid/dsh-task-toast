@@ -215,6 +215,13 @@ const MUTANTS = {
     replace: ``,
     expect: ['N teardown closes the mux socket'],
   },
+  /* Do not carry a pending across a session switch: the panel unmount erases it and the
+     plate vanishes while the agent is still blocked on you. */
+  'no-carry-on-switch': {
+    find: `    carryPendingAway(previousId)`,
+    replace: ``,
+    expect: ['O it survives the switch'],
+  },
   /* Leave the reduced-motion rule aimed at the selector the animation moved off. */
   'reduced-motion-stale-selector': {
     find: `  [data-task-toast-edge]::after { animation: none; opacity: 1; }`,

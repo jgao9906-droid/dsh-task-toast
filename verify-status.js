@@ -336,6 +336,7 @@ function boot(opts) {
     },
     /* Add a panel and settle the debounce in one step — the common case. */
     showPanel(attr, key, text) { addPanel(attr, key, text); clock.advance(SCAN_DEBOUNCE + 10); },
+    closePanel,
     setPanelText(key, text) {
       const p = panels.find((x) => x.key === key);
       if (p === undefined) return false;
@@ -772,6 +773,24 @@ const FRAME_CANCEL = (eventId) => JSON.stringify({
   check(sock.closed === true, 'N teardown closes the mux socket', 'N the socket stayed open after teardown');
   check(sock.onmessage === null, 'N and unhooks its handlers', 'N the handlers survived teardown');
   check(t.plates().length === 0 && t.edges().length === 0, 'N teardown clears the pendings it owned', 'N a teardown left an orphaned edge on screen');
+}
+{
+  const t = boot();
+  // 你正看着某个挂起时切走：面板卸载不能让它从屏幕上消失
+  t.showPanel('data-approval-key', 'approval:1', APPROVAL_TEXT);
+  t.clock.advance(300);
+  check(t.edges().length === 1 && t.word() === 'APPROVAL', 'O a pending you are reading is on screen', 'O the approval never showed up');
+  // 切到另一个会话：b 没有可绑定的 face，插件会退化成没有当前会话
+  t.row('b', { displayTitle: '另一个会话', running: false });
+  t.list.set(Object.assign({}, t.list.getSnapshot(), { current: 'b' }));
+  t.clock.advance(60);
+  t.closePanel('approval:1');      // 面板随会话切换卸载
+  t.clock.advance(300);
+  check(t.edges().length === 1, 'O it survives the switch: an unmounting panel must not erase a pending that is still open -> edges=' + t.edges().length, 'O switching away erased the pending - the bug this section exists for');
+  // 切回去：DOM 重新接管，搬运的那条撤掉；面板已经不在了，所以细边应当随之消失
+  t.list.set(Object.assign({}, t.list.getSnapshot(), { current: 'a' }));
+  t.clock.advance(300);
+  check(t.edges().length === 0, 'O and switching back hands it over to the DOM path (no double bookkeeping) -> edges=' + t.edges().length, 'O the carried copy outlived the handover: two records for one pending');
 }
 console.log('--- N done ---');
 

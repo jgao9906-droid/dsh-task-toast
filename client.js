@@ -575,11 +575,13 @@ let collapseTimer = null
 
 function pendingTop() { return pendings.length > 0 ? pendings[pendings.length - 1] : null }
 
-function addPending(state, word, detail) {
+function addPending(state, word, detail, silent) {
   pendingSeq += 1
   const id = pendingSeq
   pendings.push({ id, state, word, detail })
-  syncPending('arrive')      // a NEW thing is waiting: give it its full announcement
+  // silent：把一条已经在显示的挂起搬运过来（见 carryPendingAway）——再播报一遍等于
+  // 对着同一件事弹两次板子、发两条系统通知。
+  if (silent !== true) syncPending('arrive')   // a NEW thing is waiting: full announcement
   return id
 }
 
@@ -1109,6 +1111,8 @@ function apply(ctx) {
       const prev = rowRunning.get(id)
       rowRunning.set(id, running)
       if (prev === true && running === false) onTurnEnd(id, titleOf(id))
+      // 从「停着」变成「在跑」：说明它已经过了那个坎，搬运的挂起该收了
+      if (prev === false && running === true) dropRemotePending('carry:' + id)
     }
     // 已经不在列表里的会话：把账清掉，免得 id 被复用时拿着旧基线
     const stale = []
@@ -1168,8 +1172,11 @@ function apply(ctx) {
      否则同一个挂起会有两条记录，你答完之后还留着一条永远不走的细边。 */
   const dropRemotePendingsFor = (sessionId) => {
     if (typeof sessionId !== 'string' || sessionId === '') return
+    dropRemotePending('carry:' + sessionId)   // 搬运的那条：DOM 回来了就归它管
     const doomed = []
-    remotePendings.forEach((entry, eventId) => { if (entry.sessionId === sessionId) doomed.push(eventId) })
+    remotePendings.forEach((entry, eventId) => {
+      if (entry.sessionId === sessionId && eventId.indexOf('carry:') !== 0) doomed.push(eventId)
+    })
     for (let i = 0; i < doomed.length; i++) dropRemotePending(doomed[i])
   }
 
@@ -1190,6 +1197,23 @@ function apply(ctx) {
       if (typeof first.header === 'string' && first.header !== '') return first.header
     }
     return QUESTION_ASK
+  }
+
+  /* 你正看着某个挂起时切走：面板一卸载，DOM 那条路就把它清掉，板子凭空消失。
+     离开前以那个会话的名义再记一条（内容照抄、不重复播报）——面板卸载清的是 DOM 那条，
+     这条留着。它的寿命由三件事收口：① 你切回那个会话（DOM 重新接管，搬运的撤掉）；
+     ② 那个会话开跑新回合（说明它已经过了这个坎）；③ 插件或页面卸载。
+     前提：同一个会话同时只有一个未决挂起 —— DSH 就是阻塞在挂起上的，面板一次也只显示
+     一张卡，所以按会话记账是安全的。 */
+  const carryPendingAway = (previousId) => {
+    if (typeof previousId !== 'string' || previousId === '') return
+    if (previousId === watchedId) return
+    const top = pendingTop()
+    if (top === null) return
+    const key = 'carry:' + previousId
+    if (remotePendings.has(key)) return
+    const id = addPending(top.state, top.word, top.detail, true)
+    remotePendings.set(key, { id, sessionId: previousId })
   }
 
   const reportRemotePending = (eventName, agentId, eventId, request) => {
@@ -1591,8 +1615,10 @@ function apply(ctx) {
     // row, a sidebar refresh); rebinding on each one would churn the
     // subscription for nothing.
     if (id === watchedId && unsubSession !== null) return
+    const previousId = watchedId
 
     detachSession()
+    carryPendingAway(previousId)
     let face = null
     try {
       const binding = sessions.binding(id)
