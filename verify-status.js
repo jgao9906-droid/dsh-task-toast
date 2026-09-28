@@ -230,11 +230,28 @@ function boot(opts) {
     panels.push({ attr: o.prePanel.attr, key: o.prePanel.key, node });
   }
 
+  /* WebSocket stand-in: the plugin must open ONE mux socket, subscribe to the forwarded
+     events stream, and hand every frame to its own handler. Tests drive it directly. */
+  const wsInstances = [];
+  function WebSocketStub(url) {
+    this.url = url;
+    this.sent = [];
+    this.closed = false;
+    this.onopen = null;
+    this.onmessage = null;
+    this.onclose = null;
+    this.onerror = null;
+    this.send = (data) => { this.sent.push(String(data)); };
+    this.close = () => { this.closed = true; };
+    wsInstances.push(this);
+  }
+
   let loaded = null;
   const sandbox = {
     window: windowObj,
     document: documentStub,
     Notification: o.notification === false ? undefined : NotificationStub,
+    WebSocket: o.webSocket === false ? undefined : WebSocketStub,
     localStorage: o.localStorage === false ? undefined : store,
     MutationObserver: o.mutationObserver === false ? undefined : function (cb) {
       observerCbs.push(cb);
@@ -249,6 +266,7 @@ function boot(opts) {
   };
   sandbox.globalThis = sandbox;
   windowObj.document = documentStub;
+  if (!windowObj.location) windowObj.location = { protocol: 'http:', host: '127.0.0.1:3080' };
   windowObj.__ModuleLoader__ = { load: (m) => { loaded = m; } };
 
   vm.createContext(sandbox);
@@ -287,6 +305,7 @@ function boot(opts) {
 
   return {
     clock, body, head, documentStub, raised, store, remote, sessionA, list, panels,
+    wsInstances, ws: () => wsInstances[wsInstances.length - 1],
     mod, ctx,
     teardown: () => teardown,
     subscriberCount: () => sessionA.subscriberCount(),
@@ -678,6 +697,83 @@ console.log('--- M: other sessions report too ---');
   t.child('child-1', false);
   check(t.livePlates().length === 0, 'M a subagent session finishing is not reported on its own', 'M a child session produced its own plate on top of the parent SUBAGENT');
 }
+
+/* ==================================================================== N */
+/* 跨会话的挂起：别的会话在等授权/等回答时，DOM 里没有它的面板，只能走官方事件流。
+   分工同样划开 —— 当前会话仍由 DOM 负责，事件流只管别的会话，同一个挂起不会被报两遍。 */
+console.log('--- N: pendings from other sessions ($events stream) ---');
+const FRAME_APPROVAL = (agentId, eventId) => JSON.stringify({
+  type: 'item', streamId: 'x', value: {
+    type: 'waterfall', event: 'approval/request', eventId, agentId,
+    request: { toolName: 'Bash', reason: '工具 Bash 请求越权执行' },
+  },
+});
+const FRAME_QUESTION = (agentId, eventId) => JSON.stringify({
+  type: 'item', streamId: 'x', value: {
+    type: 'waterfall', event: 'user-questions/request', eventId, agentId,
+    request: { questions: [{ id: 'q1', question: '要用哪个方案？', header: '选择' }] },
+  },
+});
+const FRAME_CANCEL = (eventId) => JSON.stringify({
+  type: 'item', streamId: 'x', value: { type: 'cancel', eventId },
+});
+{
+  const t = boot();
+  check(t.wsInstances.length === 1, 'N it opens one mux socket', 'N no mux socket was opened');
+  t.ws().onopen();
+  check(t.ws().sent.length === 1
+    && t.ws().sent[0].indexOf('endpoint') >= 0
+    && t.ws().sent[0].indexOf('events') >= 0
+    && t.ws().sent[0].indexOf('args') >= 0,
+    'N on open it subscribes to the forwarded-events stream -> ' + t.ws().sent[0],
+    'N the open frame did not subscribe to the events stream');
+  t.ws().onmessage({ data: FRAME_QUESTION('b', 'ev-1') });
+  check(t.word() === 'QUESTION', 'N a question for ANOTHER session pops a plate -> ' + t.word(), 'N the word was ' + JSON.stringify(t.word()));
+  check(t.task() === '要用哪个方案？', 'N the detail line is that question -> ' + t.task(), 'N the detail was ' + JSON.stringify(t.task()));
+  check(t.edgeState() === 'question', 'N and the edge bar is coloured for a question -> ' + t.edgeState(), 'N the edge state was ' + JSON.stringify(t.edgeState()));
+  t.ws().onmessage({ data: FRAME_CANCEL('ev-1') });
+  check(t.edges().length === 0, 'N cancel takes the pending down entirely', 'N a cancelled pending left its edge behind');
+  check(t.livePlates().length === 0, 'N and its plate with it', 'N a cancelled pending left its plate behind');
+}
+{
+  const t = boot();
+  t.ws().onopen();
+  t.ws().onmessage({ data: FRAME_APPROVAL('b', 'ev-2') });
+  check(t.word() === 'APPROVAL' && t.task() === '工具 Bash 请求越权执行',
+    'N an approval for another session reports tool + reason -> ' + t.word() + ' / ' + t.task(),
+    'N it reported ' + JSON.stringify([t.word(), t.task()]));
+}
+{
+  const t = boot();
+  t.ws().onopen();
+  // 当前会话的挂起归 DOM 那条路：事件流再报一遍就是两块板子、两条细边
+  t.ws().onmessage({ data: FRAME_QUESTION('a', 'ev-3') });
+  check(t.livePlates().length === 0 && t.edges().length === 0,
+    'N an event for the CURRENT session is ignored (the DOM path owns it)',
+    'N the current session got a second, event-driven pending');
+}
+{
+  const t = boot();
+  t.ws().onopen();
+  t.ws().onmessage({ data: 'this is not json' });
+  t.ws().onmessage({ data: JSON.stringify({ type: 'item', value: { type: 'waterfall', event: 'approval/request' } }) });
+  t.ws().onmessage({ data: JSON.stringify({ type: 'nonsense' }) });
+  check(t.livePlates().length === 0, 'N malformed frames and frames with no agentId are ignored, not thrown', 'N a malformed frame produced a plate (or threw)');
+  t.ws().onclose();
+  t.clock.advance(2000);
+  check(t.wsInstances.length === 2, 'N a dropped connection is retried with backoff -> ' + t.wsInstances.length, 'N the stream was never retried after a drop');
+}
+{
+  const t = boot();
+  t.ws().onopen();
+  t.ws().onmessage({ data: FRAME_QUESTION('b', 'ev-9') });
+  const sock = t.ws();
+  t.teardown()();
+  check(sock.closed === true, 'N teardown closes the mux socket', 'N the socket stayed open after teardown');
+  check(sock.onmessage === null, 'N and unhooks its handlers', 'N the handlers survived teardown');
+  check(t.plates().length === 0 && t.edges().length === 0, 'N teardown clears the pendings it owned', 'N a teardown left an orphaned edge on screen');
+}
+console.log('--- N done ---');
 
 /* ==================================================================== I */
 console.log('--- I: priority — a pending outranks a transient plate ---');

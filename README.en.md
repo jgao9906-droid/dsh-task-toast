@@ -253,8 +253,10 @@ Three harnesses and a mutation matrix ship in the repo. **Zero dependencies, no 
 (`vm` plus a fake DOM and fake clock):
 
 ```bash
-npm test                 # three harnesses, 201 assertions
-node _mutate.js list     # list all 28 mutants and the assertion each one targets
+npm test                 # three harnesses, 215 assertions
+node _mutate.js list     # list all 31 mutants and the assertion each one targets
+node _mutate.js <name>   # write one mutant and print which harness to run
+pwsh -File _run-mutants.ps1   # run the whole matrix (killed = non-zero exit AND a printed failure line)
 ```
 
 ## How it knows each state
@@ -398,9 +400,29 @@ One companion change: the OS notification's `tag` now carries the id of the sess
 clicking the toast for a background completion lands on *that* session instead of the one you are
 looking at — click-to-focus only becomes truly useful with this.
 
-**Not done yet**: cross-session **pending approvals / questions**. Pending states are read from the
-official panels' DOM, and the DOM only holds the panel for the session you have open — it cannot see
-what another session is waiting for. That needs the `$events` stream (measured working), and is next.
+**Cross-session pending approvals / questions are wired up too.** The DOM only holds the panel for the
+session you have open, so this goes through the official event stream: connect to `/api/remote.mux`,
+open a `$events` stream, and the host pushes `approval/request` / `user-questions/request` waterfalls
+(each frame carries `agentId` — the session id), followed by a `cancel` once it is resolved. Same split
+as above: the current session's pendings stay with the DOM path (its copy-stripping was verified
+against the real panel text), the stream only covers the others, so **one pending is never reported
+twice**.
+
+The stream is a **read-only subscription**: nothing is ever sent to `$events/result`, so it cannot
+swallow the official panel or hang the agent — the "never joins the waterfall" assertions still hold.
+A dropped connection is retried with 0.8s→10s backoff; page or plugin teardown closes it, leaving no
+background connection behind.
+
+Two known gaps:
+
+1. a pending that was **already open when the stream connected** is not replayed (the stream carries
+   deltas only). The current session is unaffected — its panel is in the DOM; other sessions wait for
+   their next change;
+2. **switching away** from a session whose pending you were reading drops it from the plate when the
+   panel unmounts, and the stream does not re-announce it (it is not "new").
+
+Both need the control stream's baseline (`{type:"baseline"}` carries `approvals` / `questions` arrays)
+to close properly, and that is next.
 
 ### Signals it cannot reach (don't count on them)
 
@@ -408,7 +430,7 @@ what another session is waiting for. That needs the `$events` stream (measured w
 | --- | --- |
 | `turn/end`'s `reason` (`completed` / `error` / `aborted` / `blocked` / `max-tokens` / `interrupted`) | It exists in `SessionEventMap`, but **a client plugin has no subscription point**: `Session.events` is the internal stream the session object uses to page its own transcript, not a public subscription. Having swept every `lib/client.js`, **no client consumer touches `turn/end`**. So "how did this turn end" cannot be derived |
 | `tool/result`'s `error: {name, code}` | Also a session event, also unreachable. So "some tool failed" cannot be reported — only **agent-level** errors |
-| Which session a pending state belongs to | The DOM only holds the panel; it does not say which session it is attached to. (The remote-event route **does work**: `/api/remote.mux` + `$events` was measured delivering waterfall frames that carry `agentId` — the session id. Cross-session pending detection is the next step.) So pending states are **not labelled with a session**, and the OS notification's click-to-focus points at the **current session** — a subagent's approval may jump to the wrong one |
+| Which session a pending state belongs to | The DOM only holds the panel; it does not say which session it is attached to. (The remote-event route **does work**: `/api/remote.mux` + `$events` was measured delivering waterfall frames that carry `agentId` — the session id. Cross-session pending detection is the next step.) So the DOM path's pendings are **not labelled with a session** (they are the current session's, so click-to-focus is right). Other sessions' pendings are now owned by the event stream, whose frames carry `agentId` — the plate does not display it yet, but that is a one-line change |
 | "All subagents under the main session have finished" | A child session stopping or disappearing **does not** produce another `COMPLETE`. After `SUBAGENT` there is nothing — to know the whole job is done, send another message or watch the sidebar |
 
 **Compatibility risk**: pending approvals/questions depend on the official panels' **`data-`

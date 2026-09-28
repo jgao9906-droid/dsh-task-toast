@@ -195,6 +195,26 @@ const MUTANTS = {
     replace: `      if (!rowRunning.has(id)) { rowRunning.set(id, running); onTurnEnd(id, titleOf(id)); continue }`,
     expect: ['M first sight of a running session is a baseline'],
   },
+  /* Report the current session from the event stream too: the DOM path already owns it,
+     so the same pending becomes two plates and an edge that never leaves. */
+  'remote-pending-includes-current': {
+    find: `    if (agentId === watchedId) return`,
+    replace: `    if (false) return`,
+    expect: ['N an event for the CURRENT session is ignored'],
+  },
+  /* Ignore the resolution frame: the pending stays on screen forever. */
+  'remote-pending-ignores-cancel': {
+    find: `    if (value.type === 'cancel') dropRemotePending(value.eventId)`,
+    replace: `    if (false) dropRemotePending(value.eventId)`,
+    expect: ['N cancel takes the pending down entirely'],
+  },
+  /* Leave the socket open after teardown: a detached plugin keeps a live connection and
+     whatever it pushes stays on screen. */
+  'remote-stream-never-closes': {
+    find: `    closeEvents()`,
+    replace: ``,
+    expect: ['N teardown closes the mux socket'],
+  },
   /* Leave the reduced-motion rule aimed at the selector the animation moved off. */
   'reduced-motion-stale-selector': {
     find: `  [data-task-toast-edge]::after { animation: none; opacity: 1; }`,

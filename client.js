@@ -1116,6 +1116,173 @@ function apply(ctx) {
     for (let i = 0; i < stale.length; i++) rowRunning.delete(stale[i])
   }
 
+
+  /* ---- 别的会话在等你：走官方事件流 ----
+     DOM 里只有一个面板 —— 你打开的那个会话的。别的会话在等授权/等回答，DOM 是看不见的。
+     所以走官方的事件流：连 `/api/remote.mux`，open 一个 `$events` 流，服务端就会把
+     `approval/request` / `user-questions/request` 两条 waterfall 推过来（帧里带 `agentId`，
+     也就是会话 id），解决之后再推一条 `cancel`。
+
+     分工与上一节同理，为的是**同一个挂起不被两条路各报一遍**：
+       · 当前会话的挂起 → 仍由面板 DOM 那条路负责（它的文案剥离是照真机文案验的）；
+       · 其它会话的挂起 → 由这里负责，按 eventId 记账，`cancel` 到了就撤。
+
+     帧形状（从正在跑的客户端包里取出来的，不是猜的）：
+       approval  { type:'waterfall', event:'approval/request', eventId, agentId,
+                   request:{ toolName, reason } }
+       question  { type:'waterfall', event:'user-questions/request', eventId, agentId,
+                   request:{ questions:[{ id, question, header, options }] } }
+       resolved  { type:'cancel', eventId }
+
+     这条流是**只读订阅**：我们不往 `$events/result` 回答任何东西，所以碰不到官方面板，
+     也不会把 agent 卡住 —— A 段那几条"绝不加入瀑布"的断言仍然成立。
+
+     断线退避重连；页面卸载或插件卸载时关掉，不留后台连接。
+     已知缺口：**连上之前**就已经在等的挂起不会补发（事件流只送增量）。当前会话不受影响
+     （面板就在 DOM 里），别的会话要等它下一次变化。 */
+  const MUX_PATH = '/api/remote.mux'
+  const EVENT_ENDPOINT = '$events'
+  let eventSocket = null
+  let eventRetryTimer = null
+  let eventRetryMs = 800
+  let eventStreamSeq = 0
+  const remotePendings = new Map()   // eventId -> { id, sessionId }
+
+  const muxUrl = () => {
+    try {
+      const loc = (typeof window !== 'undefined' && window.location) ? window.location : null
+      if (loc === null || typeof loc.host !== 'string' || loc.host === '') return ''
+      return (loc.protocol === 'https:' ? 'wss://' : 'ws://') + loc.host + MUX_PATH
+    } catch (e) { return '' }
+  }
+
+  const dropRemotePending = (eventId) => {
+    if (typeof eventId !== 'string' || eventId === '') return
+    const entry = remotePendings.get(eventId)
+    if (entry === undefined) return
+    remotePendings.delete(eventId)
+    removePending(entry.id)
+  }
+
+  /* 某个会话被切到前台之后，它的挂起改由 DOM 那条路负责：把这里记的账撤掉，
+     否则同一个挂起会有两条记录，你答完之后还留着一条永远不走的细边。 */
+  const dropRemotePendingsFor = (sessionId) => {
+    if (typeof sessionId !== 'string' || sessionId === '') return
+    const doomed = []
+    remotePendings.forEach((entry, eventId) => { if (entry.sessionId === sessionId) doomed.push(eventId) })
+    for (let i = 0; i < doomed.length; i++) dropRemotePending(doomed[i])
+  }
+
+  /* 详情行：审批优先用请求自带的原因，没有才回退到"工具 X 请求越权执行"（和 DOM 那条路
+     同一套措辞）；提问用第一题的题干。 */
+  const detailOfEvent = (eventName, request) => {
+    const req = (request === null || typeof request !== 'object') ? {} : request
+    if (eventName === 'approval/request') {
+      const reason = typeof req.reason === 'string' ? req.reason.trim() : ''
+      if (reason !== '') return reason
+      const tool = typeof req.toolName === 'string' ? req.toolName : ''
+      return APPROVAL_ASK.replace('{tool}', tool === '' ? '?' : tool)
+    }
+    const list = Array.isArray(req.questions) ? req.questions : []
+    const first = list.length > 0 ? list[0] : null
+    if (first !== null && typeof first === 'object') {
+      if (typeof first.question === 'string' && first.question !== '') return first.question
+      if (typeof first.header === 'string' && first.header !== '') return first.header
+    }
+    return QUESTION_ASK
+  }
+
+  const reportRemotePending = (eventName, agentId, eventId, request) => {
+    if (eventName !== 'approval/request' && eventName !== 'user-questions/request') return
+    if (typeof eventId !== 'string' || eventId === '') return
+    // 不知道属于哪个会话就不报：宁可少报，也不要把别人的东西挂到你头上
+    if (typeof agentId !== 'string' || agentId === '') return
+    if (agentId === watchedId) return          // 当前会话归 DOM 那条路
+    if (remotePendings.has(eventId)) return    // 同一条推两遍（重连后）只报一次
+    const state = eventName === 'approval/request' ? 'approval' : 'question'
+    const word = state === 'approval' ? WORD_APPROVAL : WORD_QUESTION
+    const id = addPending(state, word, detailOfEvent(eventName, request))
+    remotePendings.set(eventId, { id, sessionId: agentId })
+  }
+
+  const handleEventFrame = (data) => {
+    let msg = null
+    try {
+      const text = (typeof data === 'string') ? data : String(data)
+      msg = JSON.parse(text)
+    } catch (e) { return }
+    if (msg === null || typeof msg !== 'object') return
+    if (msg.type !== 'item') return            // 'end'/'error' 交给重连与退避兜底
+    const value = msg.value
+    if (value === null || typeof value !== 'object') return
+    if (value.type === 'waterfall') {
+      reportRemotePending(value.event, value.agentId, value.eventId, value.request)
+      return
+    }
+    if (value.type === 'cancel') dropRemotePending(value.eventId)
+  }
+
+  const closeEvents = () => {
+    if (eventRetryTimer !== null && typeof clearTimeout === 'function') clearTimeout(eventRetryTimer)
+    eventRetryTimer = null
+    const sock = eventSocket
+    eventSocket = null
+    if (sock !== null) {
+      try {
+        sock.onopen = null
+        sock.onmessage = null
+        sock.onclose = null
+        sock.onerror = null
+      } catch (e) { /* ignore */ }
+      try { if (typeof sock.close === 'function') sock.close() } catch (e) { /* ignore */ }
+    }
+    // 走了就别在屏幕上留一条没人认领的细边
+    const ids = []
+    remotePendings.forEach((entry, eventId) => ids.push(eventId))
+    for (let i = 0; i < ids.length; i++) dropRemotePending(ids[i])
+  }
+
+  const scheduleEventRetry = () => {
+    if (disposed || typeof setTimeout !== 'function') return
+    if (eventRetryTimer !== null) return
+    eventRetryTimer = setTimeout(() => { eventRetryTimer = null; openEvents() }, eventRetryMs)
+    eventRetryMs = Math.min(eventRetryMs * 2, 10000)
+  }
+
+  const openEvents = () => {
+    if (disposed || eventSocket !== null) return
+    if (typeof WebSocket === 'undefined' || WebSocket === null) return
+    const url = muxUrl()
+    if (url === '') return
+    let sock = null
+    try { sock = new WebSocket(url) } catch (e) { scheduleEventRetry(); return }
+    eventSocket = sock
+    eventStreamSeq += 1
+    const streamId = 'dsh-task-toast-' + eventStreamSeq
+    try {
+      sock.onopen = () => {
+        eventRetryMs = 800
+        try {
+          sock.send(JSON.stringify({
+            type: 'open',
+            streamId,
+            endpoint: EVENT_ENDPOINT,
+            payload: { args: {} },
+          }))
+        } catch (e) { /* ignore */ }
+      }
+      sock.onmessage = (ev) => {
+        const data = (ev === null || ev === undefined || ev.data === undefined) ? '' : ev.data
+        handleEventFrame(data)
+      }
+      sock.onclose = () => {
+        if (eventSocket === sock) eventSocket = null
+        scheduleEventRetry()
+      }
+      sock.onerror = () => { /* onclose 会跟上来 */ }
+    } catch (e) { eventSocket = null; scheduleEventRetry() }
+  }
+
   /* ---- 两个可见通道的公共出口 ----
      瞬时型状态全都从这里走，所以"板子永远显示、系统通知才挂可见性判据"这条
      规则只有一份实现。`force` 给挂起型用：agent 正卡着等你，那比"完成了"更
@@ -1437,6 +1604,7 @@ function apply(ctx) {
     }
 
     watchedId = id
+    dropRemotePendingsFor(id)
     const first = readSnap(face)
     lastRunning = first === null ? null : (typeof first.running === 'boolean' ? first.running : null)
     lastOpenState = first === null ? null : (typeof first.openState === 'string' ? first.openState : null)
@@ -1487,6 +1655,7 @@ function apply(ctx) {
 
   rebind()
   syncRowRunning()   // 启动时先给所有行取一次基线
+  openEvents()       // 别的会话的挂起：连官方事件流（只读订阅，不回答任何东西）
 
   ctx.effect(() => () => {
     disposed = true
@@ -1500,6 +1669,7 @@ function apply(ctx) {
     rebindTimer = null
     if (unsubList !== null) { try { unsubList() } catch (e) { /* ignore */ } }
     unsubList = null
+    closeEvents()
     detachSession()
     if (domObserver !== null) { try { domObserver.disconnect() } catch (e) { /* ignore */ } }
     domObserver = null
