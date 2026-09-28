@@ -253,8 +253,8 @@ Three harnesses and a mutation matrix ship in the repo. **Zero dependencies, no 
 (`vm` plus a fake DOM and fake clock):
 
 ```bash
-npm test                 # three harnesses, 215 assertions
-node _mutate.js list     # list all 31 mutants and the assertion each one targets
+npm test                 # three harnesses, 218 assertions
+node _mutate.js list     # list all 32 mutants and the assertion each one targets
 node _mutate.js <name>   # write one mutant and print which harness to run
 pwsh -File _run-mutants.ps1   # run the whole matrix (killed = non-zero exit AND a printed failure line)
 ```
@@ -413,16 +413,18 @@ swallow the official panel or hang the agent — the "never joins the waterfall"
 A dropped connection is retried with 0.8s→10s backoff; page or plugin teardown closes it, leaving no
 background connection behind.
 
-Two known gaps:
+Two gaps — one fixed, one a permanent limit:
 
-1. a pending that was **already open when the stream connected** is not replayed (the stream carries
-   deltas only). The current session is unaffected — its panel is in the DOM; other sessions wait for
-   their next change;
-2. **switching away** from a session whose pending you were reading drops it from the plate when the
-   panel unmounts, and the stream does not re-announce it (it is not "new").
-
-Both need the control stream's baseline (`{type:"baseline"}` carries `approvals` / `questions` arrays)
-to close properly, and that is next.
+1. a pending that was **already open when the stream connected** is not replayed: the stream carries
+   deltas only, and the host exposes **no** "what is pending right now" query (`dsh-user-approval` has
+   only `request` / `decide`, `dsh-user-questions` only `ask` — verified in the source). This is a
+   **permanent limitation**. The only way to miss it: you left a pending unanswered, restarted DSH, and
+   never visit that session. The current session is unaffected (its panel is in the DOM), and visiting
+   it reports the pending as soon as the panel appears;
+2. ~~switching away from a session whose pending you were reading drops it from the plate~~ — **fixed**:
+   the pending is carried over under the session you are leaving (without re-announcing), so the panel
+   unmount only removes the DOM copy. Switching back hands ownership to the DOM path, and that session
+   starting a new turn closes the carried copy.
 
 ### Signals it cannot reach (don't count on them)
 
