@@ -253,8 +253,8 @@ Three harnesses and a mutation matrix ship in the repo. **Zero dependencies, no 
 (`vm` plus a fake DOM and fake clock):
 
 ```bash
-npm test                 # three harnesses, 218 assertions
-node _mutate.js list     # list all 32 mutants and the assertion each one targets
+npm test                 # three harnesses, 220 assertions
+node _mutate.js list     # list all 33 mutants and the assertion each one targets
 node _mutate.js <name>   # write one mutant and print which harness to run
 pwsh -File _run-mutants.ps1   # run the whole matrix (killed = non-zero exit AND a printed failure line)
 ```

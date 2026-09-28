@@ -222,6 +222,13 @@ const MUTANTS = {
     replace: ``,
     expect: ['O it survives the switch'],
   },
+  /* Carry whatever pending is on screen, even when it belongs to a third session: the
+     copy is filed under the wrong session, its cancel cannot find it, and the edge sticks. */
+  'carry-foreign-pending': {
+    find: `    if (eventOwned) return`,
+    replace: `    if (false) return`,
+    expect: ['P a pending owned by the event stream'],
+  },
   /* Leave the reduced-motion rule aimed at the selector the animation moved off. */
   'reduced-motion-stale-selector': {
     find: `  [data-task-toast-edge]::after { animation: none; opacity: 1; }`,

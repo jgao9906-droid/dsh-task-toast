@@ -792,6 +792,21 @@ const FRAME_CANCEL = (eventId) => JSON.stringify({
   t.clock.advance(300);
   check(t.edges().length === 0, 'O and switching back hands it over to the DOM path (no double bookkeeping) -> edges=' + t.edges().length, 'O the carried copy outlived the handover: two records for one pending');
 }
+{
+  const t = boot();
+  t.ws().onopen();
+  // 事件流报的挂起属于「别的会话」（不是当前会话）
+  t.ws().onmessage({ data: FRAME_APPROVAL('b', 'ev-carry') });
+  check(t.edges().length === 1 && t.word() === 'APPROVAL', 'P a foreign pending is on screen', 'P the foreign pending never showed up');
+  // 切会话：这条挂起**不能**被搬到「我刚离开的会话」名下
+  t.row('c', { displayTitle: '第三个会话', running: false });
+  t.list.set(Object.assign({}, t.list.getSnapshot(), { current: 'c' }));
+  t.clock.advance(300);
+  // 它被解决时，事件流的 cancel 必须能把它收掉
+  t.ws().onmessage({ data: FRAME_CANCEL('ev-carry') });
+  t.clock.advance(300);
+  check(t.edges().length === 0, 'P a pending owned by the event stream is not re-filed under the session you left, so its cancel still clears it -> edges=' + t.edges().length, 'P a foreign pending was carried under the wrong session: its cancel can no longer find it - a stuck edge');
+}
 console.log('--- N done ---');
 
 /* ==================================================================== I */

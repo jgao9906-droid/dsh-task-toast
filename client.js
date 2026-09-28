@@ -1210,6 +1210,12 @@ function apply(ctx) {
     if (previousId === watchedId) return
     const top = pendingTop()
     if (top === null) return
+    // 只搬运 DOM 那条路记的账。板子上这条如果是**事件流**记的，它属于另一个会话 ——
+    // 搬到"我刚离开的会话"名下就成了张冠李戴：cancel 按 eventId 清的是原来那条，
+    // 这条改了名谁也认不出，只剩一条永远不走的细边（实测踩过）。
+    let eventOwned = false
+    remotePendings.forEach((entry) => { if (entry.id === top.id) eventOwned = true })
+    if (eventOwned) return
     const key = 'carry:' + previousId
     if (remotePendings.has(key)) return
     const id = addPending(top.state, top.word, top.detail, true)

@@ -188,8 +188,8 @@ dsh plugin --profile web rm dsh-task-toast
 仓库自带三个 harness、一个变异测试矩阵，**零依赖、不需要 DSH 在跑**（`vm` + 假 DOM/假时钟）：
 
 ```bash
-npm test                 # 三个 harness，共 218 条断言
-node _mutate.js list     # 列出 32 个变异体，各自对应哪条断言
+npm test                 # 三个 harness，共 220 条断言
+node _mutate.js list     # 列出 33 个变异体，各自对应哪条断言
 node _mutate.js <名字>   # 造一个变异体，并打印该跑哪个 harness
 pwsh -File _run-mutants.ps1   # 整张矩阵跑完（被杀 = 退出码非 0 且真的打印了失败行）
 ```
