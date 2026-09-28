@@ -142,7 +142,7 @@ const MUTANTS = {
      NOTE the `\$` — these are the PLUGIN's template-literal placeholders, and an
      unescaped `${…}` here would be interpolated by THIS file instead. */
   'bar-not-aligned': {
-    find: `  top: calc(\${EDGE}px - \${EDGE_HIT_PAD}px);`,
+    find: `  top: calc(\${TOP_GAP}px - \${EDGE_HIT_PAD}px);`,
     replace: `  top: 0;`,
     expect: ['L the bar starts at the plate top edge'],
   },
@@ -165,6 +165,14 @@ const MUTANTS = {
     find: `  top: \${EDGE_HIT_PAD}px;`,
     replace: `  top: 0;`,
     expect: ['L the visible slip is inset by the hit padding'],
+  },
+  /* Ship the 18px corner inset again: on machines where Windows draws its caption
+     buttons over the page, the plate clips the titlebar close button (reported on a
+     2K machine). Catches a silent revert of the vertical gap. */
+  'top-gap-clips-window-controls': {
+    find: `const TOP_GAP    = 48     // 距视口顶边的边距(px)`,
+    replace: `const TOP_GAP    = 18`,
+    expect: ['L the top gap'],
   },
   /* Leave the reduced-motion rule aimed at the selector the animation moved off. */
   'reduced-motion-stale-selector': {

@@ -38,7 +38,13 @@ const TOAST_MS   = 5000   // 页内停留时长。对齐 Windows 系统通知的
                           // NotificationOptions 里根本没有 duration 字段。
                           // 你要是把系统那档调成别的，就改这里跟上。
 const EXIT_MS    = 260    // 退场动画时长（必须与 CSS 里的 tt-out 一致）
-const EDGE       = 18     // 距视口右上角的边距(px)
+const EDGE       = 18     // 距视口**右**边的边距(px)。横向值，必须 > EDGE_HIT_W（见下）
+/* 距视口**顶**边的边距，为什么比横向大：有的机器上 Windows 标题栏的关闭按钮是盖在
+   网页上方的（Window Controls Overlay），板子按 18px 落下去正好顶到那个 × —— 亲戚那台
+   2K 机器上实测“有些许遮到 X 键”。标题栏高度随系统缩放变（100% 约 32px、125% 约 40px、
+   150% 约 48px），取 48 把最陡那一档也清掉。板子 / 细边 /「开启通知」面板三者共用它，
+   否则又会错位成两截东西。嫌低就调小这个，别动 EDGE —— 横向那条有重叠不变式盯着。 */
+const TOP_GAP    = 48     // 距视口顶边的边距(px)
 const WIDTH      = 340    // 提示板宽度(px)
 const Z_INDEX    = 2147482800  // 低于终末地开机屏(2147483000)，高于其雷霆大字(2147482000)
 const RETRY_MS   = 120    // 服务未就绪时的重试间隔
@@ -108,7 +114,7 @@ const PENDING_ALWAYS_NOTIFY = false
    `EDGE_W/H` 是看得见的那条（`EDGE_H` 只是"还没量到板子高度"时的退路，
    正常情况下脚本会把板子的实测高度写进 `--tt-edge-h`），`EDGE_HIT_W` 与
    `EDGE_HIT_PAD` 决定鼠标真正能碰到的那块。
-   `EDGE > EDGE_HIT_W` 必须成立 —— 板子距视口边缘留 `EDGE`，命中区只占最边上
+   `EDGE > EDGE_HIT_W` 必须成立 —— 板子距视口**右**边留 `EDGE`，命中区只占最边上
    `EDGE_HIT_W`，两者不重叠，所以鼠标停在命中区时永远不会被板子盖住（那会让
    mouseleave 立刻触发、悬停变成抽搐）。有断言盯着这条不等式。 */
 const EDGE_W = 8          // 可见细边宽度（原 6）
@@ -131,7 +137,7 @@ const ASK_AFTER_MS = 600   // 首次提示板消失后，隔多久问一次授�
 const CSS = `
 [data-task-toast] {
   position: fixed;
-  top: ${EDGE}px;
+  top: ${TOP_GAP}px;
   right: ${EDGE}px;
   z-index: ${Z_INDEX};
   box-sizing: border-box;
@@ -170,7 +176,7 @@ const CSS = `
 /* done / subagent 故意没有规则：它们跟随主题的 --edge-accent */
 
 /* ---------- 挂起细边：整块收起后的锚点，也是唯一的鼠标悬停目标 ----------
-   贴在视口右上角（不像板子那样留 EDGE 边距），读起来就是"屏幕边缘有个东西亮着"。
+   横向贴在视口最右边（不像板子那样留 EDGE 边距），读起来就是"屏幕边缘有个东西亮着"。
 
    两件事在这里同时解决：
 
@@ -181,10 +187,10 @@ const CSS = `
 
 [data-task-toast-edge] {
   position: fixed;
-  /* 和板子共用同一条上边缘：板子从 EDGE 开始，细边也从 EDGE 开始。
-     原来是 top:0，比板子整整高出一个 EDGE，看起来就是错位的两截东西。
-     命中区比可见的条上下各多 EDGE_HIT_PAD，所以往上让 PAD，可见的条才落在 EDGE 上。 */
-  top: calc(${EDGE}px - ${EDGE_HIT_PAD}px);
+  /* 和板子共用同一条上边缘：板子从 TOP_GAP 开始，细边也从 TOP_GAP 开始。
+     原来是 top:0，比板子整整高出一个边距，看起来就是错位的两截东西。
+     命中区比可见的条上下各多 EDGE_HIT_PAD，所以往上让 PAD，可见的条才落在 TOP_GAP 上。 */
+  top: calc(${TOP_GAP}px - ${EDGE_HIT_PAD}px);
   right: 0;
   z-index: ${Z_INDEX};
   width: ${EDGE_HIT_W}px;      /* 命中区：比可见的条宽，否则鼠标点不中 */
@@ -372,7 +378,7 @@ const CSS = `
 /* ---------- 一次性授权询问：同一套语言，但可交互 ---------- */
 [${ASK_ATTR}] {
   position: fixed;
-  top: ${EDGE}px;
+  top: ${TOP_GAP}px;
   right: ${EDGE}px;
   z-index: ${Z_INDEX};
   box-sizing: border-box;
@@ -651,7 +657,7 @@ function syncPending(mode) {
   }
   // 到达：整块播报。细边**保留**——它是悬停目标，而一个从鼠标底下被移除的元素
   // 永远不会触发 mouseleave，那会把 edgeHovered 永久卡在 true。视觉上它成了板子
-  // 旁边的锚点（板子距边缘 18px，命中区只占最边上 14px，两者不重叠）。
+  // 旁边的锚点（板子距右边 18px、距顶 48px，命中区只占最边上 14px，两者不重叠）。
   peekShown = false          // 这是播报，不是悬停展开：移开鼠标不该掐断它
   showToast(top.word, top.detail, top.state, true)
   armCollapse()

@@ -45,7 +45,7 @@ The slip is **hoverable**: after a pending state collapses into it, pointing at 
 back so you can see again *what* is waiting; moving away collapses it again. There is no button and
 it performs no action — it is purely "take another look".
 
-The slip and the plate **share the same top edge** (both start 18px from the top), and the slip's
+The slip and the plate **share the same top edge** (both start 48px from the top — the vertical gap is larger than the horizontal one, see Slip geometry), and the slip's
 length is the plate's **measured** height rather than a hardcoded constant — the two must line up
 exactly, or they read as two misaligned objects. (Originally it hugged the viewport corner at
 `top:0`, sticking out a full margin above the plate. That was the bug.)
@@ -87,7 +87,7 @@ A few edge behaviours:
   the mouse. An assertion pins that this node is the same object across collapse, expand and a new
   arrival.
 - **Hovering never flickers.** The pointer target occupies only the outermost 14px of the viewport
-  while the plate keeps an 18px inset, so the two **never overlap** — the plate cannot land under
+  while the plate keeps an 18px inset on the right, so the two **never overlap** — the plate cannot land under
   the pointer. That geometric invariant (`EDGE > EDGE_HIT_W`) is asserted, and asserted against
   **values read out of the source** (an earlier version compared the harness's own mirrored
   constants, and one mutant survived because of it).
@@ -253,8 +253,8 @@ Three harnesses and a mutation matrix ship in the repo. **Zero dependencies, no 
 (`vm` plus a fake DOM and fake clock):
 
 ```bash
-npm test                 # three harnesses, 191 assertions
-node _mutate.js list     # list all 24 mutants and the assertion each one targets
+npm test                 # three harnesses, 194 assertions
+node _mutate.js list     # list all 25 mutants and the assertion each one targets
 ```
 
 ## How it knows each state
@@ -428,6 +428,8 @@ class of races — so it is "change one line and reload" for now):
 const TOAST_MS = 5000                  // transient dwell (matches the OS notification's 5s)
 const PENDING_FULL_MS = 5000           // how long a pending plate stays full before collapsing
 const PENDING_ALWAYS_NOTIFY = false    // should pending states bypass the visibility rule? (see above)
+const TOP_GAP = 48                      // **vertical** gap: clears the window close button when it overlays the page
+const EDGE = 18                         // **horizontal** gap: must stay > EDGE_HIT_W or hovering flickers
 const EDGE_W = 8                        // visible slip width (was 6)
 const EDGE_H = 128                      // FALLBACK slip length; normally the plate's measured height
 const EDGE_HIT_W = 14                   // pointer-target width: wider than the slip, or it cannot be hit
@@ -462,10 +464,12 @@ pointer can actually touch. Three geometric relations must hold, all asserted (a
 from the source):
 
 1. **the pointer target is wider than the visible slip** (or the mouse cannot hit it);
-2. **the plate's `EDGE` inset is larger than the pointer target's width** (or the plate covers the
+2. **the plate's `EDGE` inset (on the right) is larger than the pointer target's width** (or the plate covers the
    pointer, the peek ends instantly and it flickers);
 3. **the visible slip starts exactly at the plate's top edge** (the hit area's extra PAD must be
-   subtracted internally, or the whole slip sits PAD pixels low).
+   subtracted internally, or the whole slip sits PAD pixels low);
+4. **the vertical gap `TOP_GAP` is at least 48px** (the plate, the slip and the permission panel all
+   share one value; shrinking it to 18px clips the window close button again — measured on a 2K machine).
 
 Reload the profile after editing. To also pop on turn **start**, add an
 `else if (prev === false && next === true)` branch next to the
@@ -528,6 +532,7 @@ node verify-status.js "$PWD/_mutant.js"   # must fail
 | `tail-strip-anywhere` | strip trailing labels globally, eating the same word inside the question | 2 |
 | `bar-still-tiny` | revert the slip to the length that read as invisible | 1 |
 | `bar-not-aligned` | pin the slip back to the viewport corner (a margin above the plate) | 1 |
+| `top-gap-clips-window-controls` | shrink the vertical gap back to 18px (clips the window close button) | 1 |
 | `bar-hardcoded-height` | ignore the measured plate height, use the hardcoded length | 1 |
 | `slip-offset-by-padding` | forget to cancel the hit padding internally (the slip sits 4px low) | 1 |
 | `pointer-target-overlaps-plate` | widen the pointer target into the plate (hovering would flicker) | 1 |

@@ -720,8 +720,8 @@ console.log('--- L: the anchor bar — size and hover-to-peek ---');
     const m = new RegExp('const ' + name + '\\s*=\\s*(-?\\d+)').exec(src);
     return m === null ? NaN : Number(m[1]);
   };
-  const pW = srcNum('EDGE_W'), pH = srcNum('EDGE_H'), pHit = srcNum('EDGE_HIT_W'), pEdge = srcNum('EDGE'), pPad = srcNum('EDGE_HIT_PAD');
-  check(!isNaN(pW) && !isNaN(pH) && !isNaN(pHit) && !isNaN(pEdge) && !isNaN(pPad),
+  const pW = srcNum('EDGE_W'), pH = srcNum('EDGE_H'), pHit = srcNum('EDGE_HIT_W'), pEdge = srcNum('EDGE'), pTop = srcNum('TOP_GAP'), pPad = srcNum('EDGE_HIT_PAD');
+  check(!isNaN(pW) && !isNaN(pH) && !isNaN(pHit) && !isNaN(pEdge) && !isNaN(pTop) && !isNaN(pPad),
     'L the geometry constants are readable from the source (harness sanity)', 'L could not read the geometry constants — the invariants below would be vacuous');
   const pulse = /@keyframes tt-edge\s*\{([\s\S]*?)\}/.exec(css);
   check(pulse !== null && /opacity:\s*\.5/.test(pulse[1]), 'L the pulse floor was raised off near-invisible (.28 -> .5)', 'L the pulse still fades to almost nothing');
@@ -729,8 +729,8 @@ console.log('--- L: the anchor bar — size and hover-to-peek ---');
      viewport corner (top:0) while the plate starts EDGE down, so it stuck out a
      whole EDGE above it. Both now share the plate's top edge, and the hit area's
      extra padding is subtracted so the VISIBLE slip lands exactly on it. */
-  check(edgeRule !== null && /top:\s*calc\(/.test(edgeRule[1]) && edgeRule[1].indexOf(pEdge + 'px') >= 0,
-    'L the bar starts at the plate top edge (' + pEdge + 'px), not at the viewport corner', 'L the bar is still pinned to the corner: it will stick out above the plate');
+  check(edgeRule !== null && /top:\s*calc\(/.test(edgeRule[1]) && edgeRule[1].indexOf(pTop + 'px') >= 0,
+    'L the bar starts at the plate top edge (' + pTop + 'px), not at the viewport corner', 'L the bar is still pinned to the corner: it will stick out above the plate');
   check(slipRule !== null && new RegExp('top:\\s*' + pPad + 'px').test(slipRule[1]),
     'L the visible slip is inset by the hit padding, so the padding cancels out', 'L the visible slip is not offset by the hit padding — it would sit ' + pPad + 'px low');
   // Hoverability: the pointer target must be WIDER than the visible slip, and the
@@ -741,6 +741,16 @@ console.log('--- L: the anchor bar — size and hover-to-peek ---');
   check(css.indexOf('pointer-events: auto') >= 0, 'L the bar accepts the pointer', 'L the bar still ignores the pointer');
   const plateRule = /\[data-task-toast\]\s*\{([\s\S]*?)\}/.exec(css);
   check(plateRule !== null && /pointer-events:\s*none/.test(plateRule[1]), 'L while the plate itself stays transparent to clicks', 'L the plate became click-blocking');
+  /* The vertical gap moved off EDGE once window controls started sitting ON TOP of the
+     page: on a 2K machine the plate clipped the titlebar close button. Two things must
+     hold — the gap must clear the tallest common caption row (48 CSS px at 150% OS
+     scaling), and plate + bar must share the SAME vertical constant or they split into
+     two objects again (the exact misalignment the user caught once already). */
+  check(!isNaN(pTop) && pTop >= 48, 'L the top gap (' + pTop + 'px) clears a Windows caption row even at 150% scaling', 'L the top gap is under 48px: the plate will clip the window controls again');
+  check(plateRule !== null && new RegExp('top:\\s*' + pTop + 'px').test(plateRule[1]),
+    'L the plate starts ' + pTop + 'px from the top', 'L the plate top is not the new gap');
+  check(edgeRule !== null && edgeRule[1].indexOf(pTop + 'px') >= 0 && edgeRule[1].indexOf(pEdge + 'px') < 0,
+    'L the bar shares the plate vertical gap (' + pTop + 'px), not the horizontal inset', 'L the bar and the plate no longer share a top edge');
   // The pulse moved onto ::after; a reduced-motion rule aimed at the old selector
   // would silently stop working.
   check(/prefers-reduced-motion[\s\S]*\[data-task-toast-edge\]::after\s*\{\s*animation:\s*none/.test(css),
